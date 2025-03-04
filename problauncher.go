@@ -98,6 +98,7 @@ func initMeter(ctx context.Context, otelResource *resource.Resource) error {
 		ctx,
 		otlpmetrichttp.WithEndpoint(HTTP_ENDPOINT),
 		otlpmetrichttp.WithURLPath(HTTP_METRICS_URL_PATH),
+		otlpmetrichttp.WithInsecure(),
 		//otlpmetrichttp.WithHeaders(map[string]string{
 		//	"Authorization": "Bearer YOUR_TOKEN", // 阿里云要求的认证头
 		//}),
