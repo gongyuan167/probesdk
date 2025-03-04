@@ -22,7 +22,9 @@ import (
 
 const HTTP_ENDPOINT = "tracing-analysis-dc-bj.aliyuncs.com"
 const HTTP_TRACE_URL_PATH = "adapt_igkxc7d8zo@c3f99692f4e27fe_igkxc7d8zo@53df7ad2afe8301/api/otlp/traces"
-const HTTP_METRICS_URL_PATH = "adapt_igkxc7d8zo@c3f99692f4e27fe_igkxc7d8zo@53df7ad2afe8301/api/otlp/metrics"
+
+const HTTP_METRIC_ENDPOINT = "cn-beijing.arms.aliyuncs.com"
+const HTTP_METRICS_URL_PATH = "opentelemetry/58f1a59e132c474b139cf8e4366552/1874856833619396/i8anrmcvv6/cn-beijing/api/v1/metrics"
 
 // 设置应用资源
 func newResource(ctx context.Context) *resource.Resource {
@@ -96,7 +98,7 @@ var RequestCount metric.Int64Counter
 func initMeter(ctx context.Context, otelResource *resource.Resource) error {
 	exporter, err := otlpmetrichttp.New(
 		ctx,
-		otlpmetrichttp.WithEndpoint(HTTP_ENDPOINT),
+		otlpmetrichttp.WithEndpoint(HTTP_METRIC_ENDPOINT),
 		otlpmetrichttp.WithURLPath(HTTP_METRICS_URL_PATH),
 		otlpmetrichttp.WithInsecure(),
 		//otlpmetrichttp.WithHeaders(map[string]string{
