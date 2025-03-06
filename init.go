@@ -141,4 +141,9 @@ func init() {
 		fmt.Println(err)
 	}
 
+	err = InitTraceContext()
+	if err != nil {
+		fmt.Println(err)
+	}
+
 }
