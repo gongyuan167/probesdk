@@ -2,6 +2,7 @@ package problauncher
 
 import (
 	"context"
+	"fmt"
 	"go.opentelemetry.io/otel"
 	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 	"go.opentelemetry.io/otel/trace"
@@ -38,4 +39,26 @@ func TestTraceContext(t *testing.T) {
 	}
 	defer span.End()
 
+}
+
+func TestTraceTree(t *testing.T) {
+	ctx := context.Background()
+	tracer := otel.GetTracerProvider().Tracer(
+		"echo-server",
+		trace.WithInstrumentationVersion("v4.0.0"),
+		trace.WithSchemaURL(semconv.SchemaURL),
+	)
+	ctx1, span1 := tracer.Start(ctx, "level1")
+	ctx2, span2 := tracer.Start(ctx1, "level2")
+	ctx3, span3 := tracer.Start(ctx2, "level3")
+	ctx4, span4 := tracer.Start(ctx3, "level4")
+
+	ctx5 := context.WithValue(ctx4, "111", "222")
+
+	fmt.Println(span1)
+	fmt.Println(span2)
+	fmt.Println(span3)
+	fmt.Println(span4)
+	fmt.Println(ctx4)
+	fmt.Println(ctx5)
 }
