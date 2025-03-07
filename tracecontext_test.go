@@ -85,16 +85,6 @@ func initTracer() *sdktrace.TracerProvider {
 	return tp
 }
 
-//// 独立封装的Span启动函数
-//func startSpan(ctx context.Context, name string) (context.Context, trace.Span) {
-//	return otel.Tracer("benchmark").Start(ctx, name)
-//}
-//
-//// 新增封装的Span结束函数
-//func endSpan(span trace.Span) {
-//	span.End()
-//}
-
 // 独立封装的Span启动函数
 func startSpan(ctx context.Context, name string) (context.Context, trace.Span) {
 	nctx, _ := RetrieveSpanContext(context.Background())
@@ -147,5 +137,56 @@ func BenchmarkNestedSpans(b *testing.B) {
 		endSpan(revivedSpan)
 
 		endSpan(root) // 结束根Span
+	}
+}
+
+// 独立封装的Span启动函数
+func directStartSpan(ctx context.Context, name string) (context.Context, trace.Span) {
+	return otel.Tracer("benchmark").Start(ctx, name)
+}
+
+// 新增封装的Span结束函数
+func directEndSpan(span trace.Span) {
+	span.End()
+}
+
+func BenchmarkDirectNestedSpans(b *testing.B) {
+	tp := initTracer()
+	defer tp.Shutdown(context.Background())
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		// 创建根Span
+		ctx, root := directStartSpan(context.Background(), "root")
+
+		// 第一层子Span
+		childCtx1, child1 := directStartSpan(ctx, "child1")
+		_, grandChild1 := directStartSpan(childCtx1, "grandchild1")
+		directEndSpan(grandChild1) // 使用封装函数结束
+		directEndSpan(child1)
+
+		// 第二层子Span
+		childCtx2, child2 := directStartSpan(ctx, "child2")
+
+		// 嵌套两层
+		grandChildCtx2, grandChild2 := directStartSpan(childCtx2, "grandchild2")
+		_, greatGrandChild := directStartSpan(grandChildCtx2, "great-grandchild")
+		directEndSpan(greatGrandChild)
+		directEndSpan(grandChild2)
+
+		// 创建同级Span
+		_, grandChild3 := directStartSpan(childCtx2, "grandchild3")
+		directEndSpan(grandChild3)
+
+		directEndSpan(child2)
+
+		// 复用上下文创建新Span
+		revivedSpanCtx, revivedSpan := directStartSpan(grandChildCtx2, "revived")
+		_, deepChild := directStartSpan(revivedSpanCtx, "deepChild")
+		directEndSpan(deepChild)
+		directEndSpan(revivedSpan)
+
+		directEndSpan(root) // 结束根Span
 	}
 }
