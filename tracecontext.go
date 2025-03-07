@@ -2,155 +2,119 @@ package problauncher
 
 import (
 	"context"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
+	"github.com/golang/protobuf/proto"
 	"go.opentelemetry.io/otel/trace"
-	"runtime/pprof"
+	"strconv"
 )
 
 // var DefaultGlobalTraceContext *GlobalTraceContext
 
-const GRTTraceContextKey = "github.com/gongyuan167/problauncher.GRTTraceContextKey"
+const GRTTraceContextPrefix = "GRTTraceContextKey/"
+const GRTTraceContextLen = GRTTraceContextPrefix + "Idx"
 
-// const DefaultMaxGlobalTraceContext = 100000
-
-type LinkedTraceContext struct {
-	TraceContext trace.SpanContextConfig
-	Parent       *LinkedTraceContext
-}
-
-// SavedTraceContext JSON中存储的数据格式
-type SavedTraceContext struct {
-	TraceID    string
-	SpanID     string
-	TraceFlags string
-	TraceState string
-	Remote     bool
-}
-
-// SavedLinkedTraceContext 便于解析的数据格式
-type SavedLinkedTraceContext struct {
-	TraceContext SavedTraceContext
-	Parent       *SavedLinkedTraceContext
-}
-
-func getGRTLinkedTraceContext() *SavedLinkedTraceContext {
-	data := GetProfLabel()
-	jsonStr, ok := data[GRTTraceContextKey]
-	if !ok || len(jsonStr) == 0 {
-		return nil
+func NewTraceContext(ctx trace.SpanContext) *TraceContextProto {
+	traceID := ctx.TraceID()
+	spanID := ctx.SpanID()
+	traceFlags := byte(ctx.TraceFlags())
+	tcp := TraceContextProto{
+		TraceId:    traceID[:],
+		SpanId:     spanID[:],
+		TraceFlags: []byte{traceFlags},
+		TraceState: ctx.TraceState().String(),
+		Remote:     ctx.IsRemote(),
 	}
-	result := &SavedLinkedTraceContext{}
-	err := json.Unmarshal([]byte(jsonStr), result)
+	return &tcp
+}
+
+func DecodeTraceContext(data string) *TraceContextProto {
+	result := &TraceContextProto{}
+	err := proto.Unmarshal([]byte(data), result)
 	if err != nil {
 		panic(err)
 	}
 	return result
 }
 
-func setGRTLabels(str string) {
-	lbs := pprof.Labels(GRTTraceContextKey, str)
-	// todo: it will make the original labels get lost
-	gCTX := pprof.WithLabels(context.Background(), lbs)
-	pprof.SetGoroutineLabels(gCTX)
-}
-
-func (l *SavedLinkedTraceContext) setGRTLinkedTraceContext() {
-	jsonStr, err := json.Marshal(l)
+func EncodeTraceContext(tc *TraceContextProto) string {
+	result, err := proto.Marshal(tc)
 	if err != nil {
 		panic(err)
 	}
-	setGRTLabels(string(jsonStr))
+	return string(result)
+}
+
+func getTargetKey(idx int) string {
+	return GRTTraceContextPrefix + strconv.Itoa(idx)
+}
+
+func TopTraceContext() (*TraceContextProto, bool) {
+	data := GetProfLabel()
+	sizeStr, _ := data[GRTTraceContextLen]
+	size, _ := strconv.Atoi(sizeStr)
+	if size == 0 {
+		return nil, false
+	}
+	targetKey := getTargetKey(size - 1)
+	tcStr, _ := data[targetKey]
+	tc := DecodeTraceContext(tcStr)
+	return tc, true
+}
+
+func PopTraceContext() bool {
+	data := GetProfLabel()
+	sizeStr, _ := data[GRTTraceContextLen]
+	size, err := strconv.Atoi(sizeStr)
+	if err != nil {
+		return false
+	}
+	if size == 0 {
+		return false
+	}
+	newSize := size - 1
+	removeKey := getTargetKey(newSize)
+	newSizeStr := strconv.Itoa(newSize)
+	delete(data, removeKey)
+	data[GRTTraceContextLen] = newSizeStr
+	return true
+}
+
+func PushTraceContext(tc *TraceContextProto) {
+	data := GetProfLabel()
+	sizeStr, _ := data[GRTTraceContextLen]
+	size, _ := strconv.Atoi(sizeStr)
+	addKey := getTargetKey(size)
+	newSize := size + 1
+	data[GRTTraceContextLen] = strconv.Itoa(newSize)
+	data[addKey] = EncodeTraceContext(tc)
 }
 
 func OnSpanStart(span trace.Span) {
-	parent := getGRTLinkedTraceContext()
-	stx := span.SpanContext()
-	savedContext := SavedTraceContext{
-		TraceID:    stx.TraceID().String(),
-		SpanID:     stx.SpanID().String(),
-		TraceFlags: stx.TraceFlags().String(),
-		TraceState: stx.TraceState().String(),
-		Remote:     stx.IsRemote(),
-	}
-
-	ctx := SavedLinkedTraceContext{
-		TraceContext: savedContext,
-		Parent:       parent,
-	}
-
-	ctx.setGRTLinkedTraceContext()
+	tc := NewTraceContext(span.SpanContext())
+	PushTraceContext(tc)
 }
 
-func OnSpanEnd(span trace.Span) {
-	top := getGRTLinkedTraceContext()
-	stx := span.SpanContext()
-	if top == nil || top.TraceContext.SpanID != stx.SpanID().String() {
-		fmt.Errorf("wrong span configuration detected!\b")
-		setGRTLabels("")
-		return
-	}
-	if top.Parent == nil {
-		setGRTLabels("")
-		return
-	}
-	top.Parent.setGRTLinkedTraceContext()
-}
-
-func GetSpanContext() (trace.SpanContext, error) {
-	result := getGRTLinkedTraceContext()
-	if result == nil {
-		return trace.SpanContext{}, fmt.Errorf("empty span context")
-	}
-	data := result.TraceContext
-	// 转换TraceID
-	traceID, err := trace.TraceIDFromHex(data.TraceID)
-	if err != nil {
-		panic(fmt.Errorf("invalid TraceID: %v", err))
-	}
-
-	// 转换SpanID
-	spanID, err := trace.SpanIDFromHex(data.SpanID)
-	if err != nil {
-		panic(fmt.Errorf("invalid SpanID: %v", err))
-	}
-
-	// 转换TraceFlags
-	traceFlagsBytes, err := hex.DecodeString(data.TraceFlags)
-	if err != nil || len(traceFlagsBytes) != 1 {
-		panic(fmt.Errorf("invalid TraceFlags: %v", err))
-	}
-	traceFlags := trace.TraceFlags(traceFlagsBytes[0])
-
-	// 转换TraceState（若为空则返回空状态）
-	traceState, err := trace.ParseTraceState(data.TraceState)
-	if err != nil {
-		panic(fmt.Errorf("invalid TraceState: %v", err))
-	}
-
-	// 创建SpanContext
-	spanContext := trace.NewSpanContext(trace.SpanContextConfig{
-		TraceID:    traceID,
-		SpanID:     spanID,
-		TraceFlags: traceFlags,
-		TraceState: traceState,
-		Remote:     data.Remote,
-	})
-
-	// 验证SpanContext是否有效
-	if !spanContext.IsValid() {
-		panic("resulting SpanContext is invalid")
-	}
-	return spanContext, nil
+func OnSpanEnd(span trace.Span) bool {
+	return PopTraceContext()
 }
 
 func RetrieveSpanContext(ctx context.Context) (context.Context, error) {
-	spanCtx, err := GetSpanContext()
+	tc, ok := TopTraceContext()
+	if !ok {
+		return ctx, fmt.Errorf("no tracing context found")
+	}
+	traceState, err := trace.ParseTraceState(tc.TraceState)
 	if err != nil {
 		return ctx, err
 	}
-	return trace.ContextWithSpanContext(ctx, spanCtx), nil
+	traceCfg := trace.SpanContextConfig{
+		TraceFlags: trace.TraceFlags(tc.TraceFlags[0]),
+		TraceState: traceState,
+		Remote:     tc.Remote,
+	}
+	copy(traceCfg.TraceID[:], tc.TraceId)
+	copy(traceCfg.SpanID[:], tc.SpanId)
+	return trace.ContextWithSpanContext(ctx, trace.NewSpanContext(traceCfg)), nil
 }
 
 //type GlobalTraceContext struct {

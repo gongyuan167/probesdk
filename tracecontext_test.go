@@ -8,6 +8,12 @@ import (
 	"testing"
 )
 
+func GetSpanContext() (trace.SpanContext, error) {
+	ctx := context.Background()
+	ctx, err := RetrieveSpanContext(ctx)
+	return trace.SpanContextFromContext(ctx), err
+}
+
 func TestSetTraceContext(t *testing.T) {
 	ctx := context.Background()
 	tracer := otel.GetTracerProvider().Tracer(

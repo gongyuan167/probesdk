@@ -1,6 +1,8 @@
 package problauncher
 
 import (
+	"context"
+	"runtime/pprof"
 	_ "runtime/pprof"
 	"unsafe"
 )
@@ -15,7 +17,9 @@ func GetProfLabel() map[string]string {
 	ptr := Runtime_getProfLabel()
 	result := (*labelMap)(ptr)
 	if result == nil {
-		return map[string]string{}
+		ctx := pprof.WithLabels(context.Background(), pprof.Labels())
+		pprof.SetGoroutineLabels(ctx)
+		return GetProfLabel()
 	}
 	return *result
 }

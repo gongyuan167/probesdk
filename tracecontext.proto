@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package problauncher;
+option go_package = "github.com/gongyuan167/problauncher";
+
+
+message TraceContextProto {
+  bytes trace_id = 1;     // 16 bytes
+  bytes span_id = 2;      // 8 bytes
+  bytes trace_flags = 3;  // 1 byte
+  string trace_state = 4;
+  bool remote = 5;
+}
+
