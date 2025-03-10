@@ -4,7 +4,7 @@
 // 	protoc        v3.19.4
 // source: tracecontext.proto
 
-package problauncher
+package probesdk
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"

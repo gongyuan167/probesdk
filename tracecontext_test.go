@@ -1,4 +1,4 @@
-package problauncher
+package probesdk
 
 import (
 	"context"
