@@ -3,62 +3,70 @@ package problauncher
 import (
 	"context"
 	"fmt"
-	"github.com/golang/protobuf/proto"
 	"go.opentelemetry.io/otel/trace"
 	"strconv"
+	"sync"
 )
-
-// var DefaultGlobalTraceContext *GlobalTraceContext
 
 const GRTTraceContextPrefix = "GRTTraceContextKey/"
 const GRTTraceContextLen = GRTTraceContextPrefix + "Idx"
 
-func NewTraceContext(ctx trace.SpanContext) *TraceContextProto {
+const TraceIDSize = 16
+const SpanIDSize = 8
+const TraceFlagsSize = 1
+const RemoteFlagSize = 1 // use one byte to store boolean
+
+const TraceIDStart = 0
+const SpanIDStart = TraceIDStart + TraceIDSize
+const TraceFlagsStart = SpanIDStart + SpanIDSize
+const RemoteFlagStart = TraceFlagsStart + TraceFlagsSize
+const TraceStatesStart = RemoteFlagStart + RemoteFlagSize
+
+// 创建内存池
+var bytePool = &sync.Pool{
+	New: func() interface{} {
+		// 每次新建一个长度为26的字节切片
+		return make([]byte, 26)
+	},
+}
+
+func DecodeTraceContext(data string) trace.SpanContext {
+	traceState, err := trace.ParseTraceState(data[TraceStatesStart:])
+	isRemote := false
+	if data[RemoteFlagStart] != 0 {
+		isRemote = true
+	}
+	if err != nil {
+		panic(err)
+	}
+	config := trace.SpanContextConfig{
+		TraceState: traceState,
+		Remote:     isRemote,
+	}
+	copy(config.TraceID[:], data[TraceIDStart:SpanIDStart])
+	copy(config.SpanID[:], data[SpanIDStart:TraceFlagsStart])
+	config.TraceFlags = trace.TraceFlags(data[TraceFlagsStart])
+	return trace.NewSpanContext(config)
+
+}
+
+func EncodeTraceContext(ctx trace.SpanContext) string {
+	traceStateStr := ctx.TraceState().String()
+	bytes := make([]byte, TraceStatesStart+len(traceStateStr))
 	traceID := ctx.TraceID()
 	spanID := ctx.SpanID()
-	traceFlags := byte(ctx.TraceFlags())
-	tcp := TraceContextProto{
-		TraceId:    traceID[:],
-		SpanId:     spanID[:],
-		TraceFlags: []byte{traceFlags},
-		TraceState: ctx.TraceState().String(),
-		Remote:     ctx.IsRemote(),
+	copy(bytes[TraceIDStart:SpanIDStart], traceID[:])
+	copy(bytes[SpanIDStart:TraceFlagsStart], spanID[:])
+	bytes[TraceFlagsStart] = byte(ctx.TraceFlags())
+	if ctx.IsRemote() {
+		bytes[RemoteFlagStart] = 1
 	}
-	return &tcp
-}
-
-func DecodeTraceContext(data string) *TraceContextProto {
-	result := &TraceContextProto{}
-	err := proto.Unmarshal([]byte(data), result)
-	if err != nil {
-		panic(err)
-	}
-	return result
-}
-
-func EncodeTraceContext(tc *TraceContextProto) string {
-	result, err := proto.Marshal(tc)
-	if err != nil {
-		panic(err)
-	}
-	return string(result)
+	copy(bytes[TraceStatesStart:], traceStateStr)
+	return string(bytes)
 }
 
 func getTargetKey(idx int) string {
-	return GRTTraceContextPrefix + strconv.Itoa(idx)
-}
-
-func TopTraceContext() (*TraceContextProto, bool) {
-	data := GetProfLabel()
-	sizeStr, _ := data[GRTTraceContextLen]
-	size, _ := strconv.Atoi(sizeStr)
-	if size == 0 {
-		return nil, false
-	}
-	targetKey := getTargetKey(size - 1)
-	tcStr, _ := data[targetKey]
-	tc := DecodeTraceContext(tcStr)
-	return tc, true
+	return strconv.Itoa(idx)
 }
 
 func PopTraceContext() bool {
@@ -79,19 +87,14 @@ func PopTraceContext() bool {
 	return true
 }
 
-func PushTraceContext(tc *TraceContextProto) {
+func OnSpanStart(span trace.Span) {
 	data := GetProfLabel()
 	sizeStr, _ := data[GRTTraceContextLen]
 	size, _ := strconv.Atoi(sizeStr)
 	addKey := getTargetKey(size)
 	newSize := size + 1
 	data[GRTTraceContextLen] = strconv.Itoa(newSize)
-	data[addKey] = EncodeTraceContext(tc)
-}
-
-func OnSpanStart(span trace.Span) {
-	tc := NewTraceContext(span.SpanContext())
-	PushTraceContext(tc)
+	data[addKey] = EncodeTraceContext(span.SpanContext())
 }
 
 func OnSpanEnd(span trace.Span) bool {
@@ -99,22 +102,15 @@ func OnSpanEnd(span trace.Span) bool {
 }
 
 func RetrieveSpanContext(ctx context.Context) (context.Context, error) {
-	tc, ok := TopTraceContext()
-	if !ok {
-		return ctx, fmt.Errorf("no tracing context found")
+	data := GetProfLabel()
+	sizeStr, _ := data[GRTTraceContextLen]
+	size, _ := strconv.Atoi(sizeStr)
+	if size == 0 {
+		return ctx, fmt.Errorf("no span at top, but RetrieveSpanContext was called")
 	}
-	traceState, err := trace.ParseTraceState(tc.TraceState)
-	if err != nil {
-		return ctx, err
-	}
-	traceCfg := trace.SpanContextConfig{
-		TraceFlags: trace.TraceFlags(tc.TraceFlags[0]),
-		TraceState: traceState,
-		Remote:     tc.Remote,
-	}
-	copy(traceCfg.TraceID[:], tc.TraceId)
-	copy(traceCfg.SpanID[:], tc.SpanId)
-	return trace.ContextWithSpanContext(ctx, trace.NewSpanContext(traceCfg)), nil
+	targetKey := getTargetKey(size - 1)
+	tcStr, _ := data[targetKey]
+	return trace.ContextWithSpanContext(ctx, DecodeTraceContext(tcStr)), nil
 }
 
 //type GlobalTraceContext struct {
