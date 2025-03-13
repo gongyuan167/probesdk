@@ -22,11 +22,13 @@ const TraceFlagsStart = SpanIDStart + SpanIDSize
 const RemoteFlagStart = TraceFlagsStart + TraceFlagsSize
 const TraceStatesStart = RemoteFlagStart + RemoteFlagSize
 
+const ByteBufferStartSize = TraceStatesStart
+
 // 创建内存池
 var bytePool = &sync.Pool{
 	New: func() interface{} {
 		// 每次新建一个长度为26的字节切片
-		return make([]byte, 26)
+		return make([]byte, ByteBufferStartSize)
 	},
 }
 
@@ -52,7 +54,9 @@ func DecodeTraceContext(data string) trace.SpanContext {
 
 func EncodeTraceContext(ctx trace.SpanContext) string {
 	traceStateStr := ctx.TraceState().String()
-	bytes := make([]byte, TraceStatesStart+len(traceStateStr))
+	bytes := bytePool.Get().([]byte)
+	defer bytePool.Put(bytes)
+	// bytes := make([]byte, TraceStatesStart+len(traceStateStr))
 	traceID := ctx.TraceID()
 	spanID := ctx.SpanID()
 	copy(bytes[TraceIDStart:SpanIDStart], traceID[:])
@@ -61,8 +65,11 @@ func EncodeTraceContext(ctx trace.SpanContext) string {
 	if ctx.IsRemote() {
 		bytes[RemoteFlagStart] = 1
 	}
-	copy(bytes[TraceStatesStart:], traceStateStr)
-	return string(bytes)
+	// copy(bytes[TraceStatesStart:], traceStateStr)
+	if len(traceStateStr) == 0 {
+		return string(bytes)
+	}
+	return string(bytes) + traceStateStr
 }
 
 func getTargetKey(idx int) string {
